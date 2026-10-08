@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="LINKA — private messaging, voice and video communication.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <title>LINKA</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.35.0/dist/tabler-icons.min.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="boot" class="boot" aria-live="polite">
+    <div class="boot-logo"><img src="icons/icon.svg" alt="LINKA"></div>
+    <strong>LINKA</strong>
+  </div>
+
+  <div id="authView" class="auth-shell hidden">
+    <div class="auth-topline"><div class="brand-wordmark"><img src="icons/icon.svg" alt=""><span>LINKA</span></div><span class="auth-status"><i class="ti ti-lock"></i> เก็บข้อมูลบัญชีบนอุปกรณ์นี้</span></div>
+    <main class="auth-layout">
+      <section class="auth-hero">
+        <span class="eyebrow">PRIVATE COMMUNICATION</span>
+        <h1>คุยกับคนของคุณ<br>อย่างเรียบง่าย</h1>
+        <p>แชต ส่งรูป โทรเสียง และวิดีโอคอลจากรหัสเดียว ออกแบบให้ใช้งานง่ายทั้งมือถือและเว็บ</p>
+        <div class="hero-points">
+          <div><i class="ti ti-message-circle"></i><span>ข้อความแบบทันที</span></div>
+          <div><i class="ti ti-phone"></i><span>เสียงและวิดีโอคอล</span></div>
+          <div><i class="ti ti-device-mobile"></i><span>ติดตั้งเป็นแอปได้</span></div>
+        </div>
+      </section>
+
+      <section class="auth-card">
+        <div id="loginFormWrap">
+          <div class="section-kicker">WELCOME BACK</div>
+          <h2>เข้าสู่ระบบ</h2>
+          <p class="muted">เข้าสู่บัญชี LINKA ที่สร้างไว้บนอุปกรณ์นี้</p>
+          <form id="loginForm" class="form-stack">
+            <label>ชื่อผู้ใช้<input id="loginUsername" autocomplete="username" required maxlength="24" placeholder="username"></label>
+            <label>รหัสผ่าน<input id="loginPin" type="password" inputmode="numeric" autocomplete="current-password" required minlength="4" maxlength="8" placeholder="4–8 หลัก"></label>
+            <button class="btn primary wide" type="submit">เข้าสู่ระบบ</button>
+          </form>
+          <button id="toRegister" class="btn text wide">สร้างบัญชีใหม่</button>
+        </div>
+
+        <div id="registerFormWrap" class="hidden">
+          <div class="section-kicker">CREATE ACCOUNT</div>
+          <h2>สร้างบัญชี</h2>
+          <p class="muted">เริ่มต้นด้วยโปรไฟล์ของคุณ แล้วรับรหัส LINKA</p>
+          <form id="registerForm" class="form-stack">
+            <label>ชื่อที่แสดง<input id="regName" autocomplete="name" required maxlength="40" placeholder="ชื่อของคุณ"></label>
+            <label>ชื่อผู้ใช้<input id="regUsername" autocomplete="username" required maxlength="24" pattern="[A-Za-z0-9._-]+" placeholder="username"></label>
+            <label>รหัสผ่าน<input id="regPin" type="password" inputmode="numeric" autocomplete="new-password" required minlength="4" maxlength="8" placeholder="4–8 หลัก"></label>
+            <label>ยืนยันรหัสผ่าน<input id="regPin2" type="password" inputmode="numeric" autocomplete="new-password" required minlength="4" maxlength="8" placeholder="ยืนยันรหัสผ่าน"></label>
+            <label class="check-row"><input id="acceptTerms" type="checkbox" required><span>ฉันยอมรับ <button type="button" class="inline-link" data-legal="terms">ข้อตกลงการใช้งาน</button> และ <button type="button" class="inline-link" data-legal="privacy">นโยบายความเป็นส่วนตัว</button></span></label>
+            <button class="btn primary wide" type="submit">สร้างบัญชี</button>
+          </form>
+          <button id="toLogin" class="btn text wide">มีบัญชีอยู่แล้ว</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="appView" class="app-shell hidden">
+    <header class="app-header">
+      <div class="header-inner">
+        <button class="brand-button" id="homeBtn" aria-label="หน้าหลัก"><img src="icons/icon.svg" alt=""><span>LINKA</span></button>
+        <div class="header-actions">
+          <span class="connection-status" id="connectionStatus"><i></i><span>กำลังเชื่อมต่อ…</span></span>
+          <button class="icon-btn" id="profileBtn" aria-label="โปรไฟล์" title="โปรไฟล์"><i class="ti ti-user-circle"></i></button>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="view" data-view-panel="friends">
+        <div class="page-head">
+          <div>
+            <span class="eyebrow">CONTACTS</span>
+            <h1>เพื่อน</h1>
+            <p>คนที่คุณบันทึกไว้จะอยู่ที่นี่และพร้อมเชื่อมต่ออัตโนมัติ</p>
+          </div>
+          <div class="head-actions">
+            <button class="icon-btn" id="notificationBtn" title="การแจ้งเตือน" aria-label="การแจ้งเตือน"><i class="ti ti-bell"></i></button>
+            <button class="btn primary" id="openAddFriendBtn"><i class="ti ti-user-plus"></i> เพิ่มเพื่อน</button>
+          </div>
+        </div>
+
+        <div class="home-grid">
+          <section class="home-friends">
+            <div class="section-bar"><div><h2>รายชื่อเพื่อน</h2><span id="friendCount">0 คน</span></div><div class="search-inline"><i class="ti ti-search"></i><input id="homeFriendSearch" placeholder="ค้นหาเพื่อน" autocomplete="off"></div></div>
+            <div id="friendsGrid" class="friends-grid"></div>
+          </section>
+          <aside class="home-side">
+            <section class="id-card">
+              <div class="id-card-top"><span>MY LINKA ID</span><i class="ti ti-id"></i></div>
+              <div class="my-code" id="myCodeLarge">------</div>
+              <p>ใช้รหัสนี้เพื่อให้คนอื่นเพิ่มคุณ</p>
+              <div class="id-actions"><button class="btn secondary" id="copyCodeBtn"><i class="ti ti-copy"></i> คัดลอก</button><button class="btn secondary" id="shareCodeBtn"><i class="ti ti-share-2"></i> แชร์</button></div>
+            </section>
+            <section class="quick-card">
+              <div class="quick-icon"><i class="ti ti-message-circle-plus"></i></div>
+              <div><strong>เริ่มสนทนา</strong><p>เพิ่มเพื่อนด้วยรหัสสั้น แล้วเริ่มแชตได้ทันที</p></div>
+              <button class="icon-btn" id="newChatBtn" aria-label="เพิ่มเพื่อน"><i class="ti ti-arrow-right"></i></button>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view hidden" data-view-panel="chats">
+        <div class="page-head chat-page-head"><div><span class="eyebrow">MESSAGES</span><h1>แชต</h1></div><div class="search-inline wide-search"><i class="ti ti-search"></i><input id="chatSearch" placeholder="ค้นหาชื่อหรือรหัส" autocomplete="off"></div></div>
+        <div class="chat-layout">
+          <div class="chat-list-panel">
+            <div id="chatList" class="chat-list"></div>
+            <div id="chatEmpty" class="empty-state compact"><div class="empty-icon"><i class="ti ti-messages"></i></div><strong>ยังไม่มีแชต</strong><p>เพิ่มเพื่อนเพื่อเริ่มการสนทนา</p><button class="btn secondary" data-go="friends">เพิ่มเพื่อน</button></div>
+          </div>
+          <section class="conversation-panel">
+            <div id="conversationEmpty" class="empty-conversation"><div class="empty-logo"><img src="icons/icon.svg" alt=""></div><h2>เลือกการสนทนา</h2><p>เลือกเพื่อนจากรายการเพื่อเริ่มแชต หรือไปที่หน้าเพื่อนเพื่อเพิ่มคนใหม่</p></div>
+            <div id="conversation" class="hidden conversation">
+              <header class="conversation-header">
+                <div class="conversation-user"><button class="avatar-button" id="conversationAvatar" aria-label="โปรไฟล์เพื่อน">L</button><div><strong id="conversationName">เพื่อน</strong><span id="conversationPresence">กำลังรอการเชื่อมต่อ</span></div></div>
+                <div class="conversation-actions"><button class="icon-btn" id="voiceCallBtn" title="โทรเสียง" aria-label="โทรเสียง"><i class="ti ti-phone"></i></button><button class="icon-btn" id="videoCallBtn" title="วิดีโอคอล" aria-label="วิดีโอคอล"><i class="ti ti-video"></i></button><button class="icon-btn mobile-only" id="closeConversationBtn" title="กลับ" aria-label="กลับ"><i class="ti ti-chevron-left"></i></button></div>
+              </header>
+              <div class="message-scroller" id="messageScroller"><div id="messages" class="messages"></div></div>
+              <div class="composer-wrap"><form id="messageForm" class="composer"><input id="imageInput" type="file" accept="image/*" hidden><button class="composer-icon" type="button" id="attachBtn" title="ส่งรูป" aria-label="ส่งรูป"><i class="ti ti-photo"></i></button><input id="messageInput" autocomplete="off" maxlength="2000" placeholder="เขียนข้อความ…"><button class="send-btn" type="submit" aria-label="ส่ง"><i class="ti ti-arrow-up"></i></button></form></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view hidden" data-view-panel="profile">
+        <div class="page-head"><div><span class="eyebrow">ACCOUNT</span><h1>โปรไฟล์</h1><p>ข้อมูลที่แสดงให้เพื่อนของคุณ</p></div></div>
+        <div class="content-panel narrow">
+          <div class="profile-card"><div class="profile-avatar-wrap"><button class="profile-avatar large-avatar" id="profileAvatarBtn" aria-label="รูปโปรไฟล์">L</button><button class="avatar-edit" id="changeAvatarBtn" aria-label="เปลี่ยนรูป"><i class="ti ti-camera"></i></button><input id="avatarInput" type="file" accept="image/*" hidden></div><div class="profile-main"><input id="profileNameInput" class="profile-edit" maxlength="40"><div class="profile-code-row"><span id="profileUsername">@username</span><span class="code-pill" id="profileCode">------</span></div></div></div>
+          <div class="settings-card"><div class="settings-title"><i class="ti ti-id"></i><h3>ข้อมูลบัญชี</h3></div><div class="info-row"><span>ชื่อผู้ใช้</span><strong id="profileUsername2">@username</strong></div><div class="info-row"><span>รหัส LINKA</span><strong id="profileCode2">------</strong></div><div class="info-row"><span>จัดเก็บ</span><strong>อุปกรณ์นี้</strong></div></div>
+          <button class="btn danger wide" id="resetAccountBtn"><i class="ti ti-trash"></i> ลบบัญชีจากอุปกรณ์นี้</button>
+        </div>
+      </section>
+
+      <section class="view hidden" data-view-panel="settings">
+        <div class="page-head"><div><span class="eyebrow">SETTINGS</span><h1>การตั้งค่า</h1><p>ควบคุมการแจ้งเตือน การติดตั้ง และข้อกำหนด</p></div></div>
+        <div class="content-panel narrow">
+          <div class="settings-card"><div class="settings-title"><i class="ti ti-adjustments"></i><h3>แอป</h3></div><button class="setting-row" id="notificationBtn2"><span><strong>การแจ้งเตือน</strong><small id="notificationStatus">ยังไม่ได้เปิด</small></span><i class="ti ti-chevron-right"></i></button><button class="setting-row hidden" id="settingsInstallBtn"><span><strong>ติดตั้ง LINKA</strong><small>เพิ่มไปยังหน้าจอหลัก</small></span><i class="ti ti-chevron-right"></i></button></div>
+          <div class="settings-card"><div class="settings-title"><i class="ti ti-file-text"></i><h3>ข้อกำหนด</h3></div><button class="setting-row" data-legal="terms"><span><strong>ข้อตกลงการใช้งาน</strong><small>เงื่อนไขการใช้บริการ</small></span><i class="ti ti-chevron-right"></i></button><button class="setting-row" data-legal="privacy"><span><strong>นโยบายความเป็นส่วนตัว</strong><small>ข้อมูลที่เก็บบนอุปกรณ์</small></span><i class="ti ti-chevron-right"></i></button></div>
+          <div class="settings-card about-card"><div class="about-mark"><img src="icons/icon.svg" alt=""></div><div><strong>LINKA</strong><span>Messaging · Voice · Video</span><small>v2.0 · Web application</small></div></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav id="mobileNav" class="bottom-nav" aria-label="เมนูหลัก">
+    <button data-view="friends" aria-label="หน้าหลัก"><i class="ti ti-users"></i><span>เพื่อน</span></button>
+    <button data-view="chats" aria-label="แชต"><i class="ti ti-message-2"></i><span>แชต</span></button>
+    <button data-go="friends" class="nav-add" aria-label="เพิ่มเพื่อน"><i class="ti ti-plus"></i></button>
+    <button data-view="profile" aria-label="โปรไฟล์"><i class="ti ti-user-circle"></i><span>โปรไฟล์</span></button>
+    <button data-view="settings" aria-label="ตั้งค่า"><i class="ti ti-settings"></i><span>ตั้งค่า</span></button>
+  </nav>
+
+  <div id="modalRoot"></div>
+  <div id="toastRoot" class="toast-root" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
