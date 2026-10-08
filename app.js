@@ -5,6 +5,10 @@
   const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const MAX_IMAGE_BYTES = 180 * 1024;
   const RETRY_DELAYS = [1500, 4000, 9000, 18000];
+  const MEDIA_CHUNK_SIZE = 12000;
+  const MAX_ATTACHMENT_BYTES = 900 * 1024;
+  const MAX_VOICE_SECONDS = 60;
+  const LEGAL_VERSION = '1.1';
 
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -21,7 +25,9 @@
     incomingCall: null,
     activeCall: null,
     localStream: null,
-    callType: 'voice'
+    callType: 'voice',
+    recording: null,
+    mediaIncoming: new Map()
   };
 
   document.addEventListener('DOMContentLoaded', init);
@@ -87,8 +93,10 @@
     $('#chatSearch')?.addEventListener('input', renderChatList);
     $('#homeFriendSearch')?.addEventListener('input', renderFriends);
     $('#messageForm')?.addEventListener('submit', sendTextMessage);
-    $('#attachBtn')?.addEventListener('click', () => $('#imageInput')?.click());
-    $('#imageInput')?.addEventListener('change', onImageSelected);
+    $('#attachBtn')?.addEventListener('click', () => $('#fileInput')?.click());
+    $('#fileInput')?.addEventListener('change', onFileSelected);
+    $('#voiceMessageBtn')?.addEventListener('click', toggleVoiceRecording);
+    $('#cancelRecording')?.addEventListener('click', () => stopVoiceRecording(true));
     $('#cancelReply')?.addEventListener('click', clearReply);
     $('#voiceCallBtn')?.addEventListener('click', () => startCall('voice'));
     $('#videoCallBtn')?.addEventListener('click', () => startCall('video'));
@@ -169,13 +177,18 @@
       return toast('ชื่อผู้ใช้ต้องยาว 3–24 ตัว และใช้ A-Z, 0-9, จุด หรือขีด');
     }
     if (pin !== pin2) return toast('รหัสผ่านไม่ตรงกัน');
+    if (!$('#acceptTerms')?.checked) return toast('กรุณายอมรับข้อตกลงการใช้งานและนโยบายความเป็นส่วนตัว');
 
     state.db.account = {
       name,
       username,
       pinHash: await hash(pin),
       code: generateCode(),
-      avatar: ''
+      avatar: '',
+      termsVersion: LEGAL_VERSION,
+      termsAcceptedAt: Date.now(),
+      privacyVersion: LEGAL_VERSION,
+      privacyAcceptedAt: Date.now()
     };
     state.db.friends = [];
     state.db.chats = {};
@@ -335,7 +348,7 @@
         <div class="chat-row-avatar"></div>
         <div class="chat-row-main">
           <div class="chat-row-top"><strong>${esc(friend.name)}</strong><span class="chat-time">${last ? formatTime(last.ts) : ''}</span></div>
-          <div class="chat-preview">${last ? (last.type === 'image' ? 'รูปภาพ' : esc(last.text || '')) : 'แตะเพื่อเริ่มสนทนา'} ${statusDot}</div>
+          <div class="chat-preview">${last ? (last.type === 'image' ? 'รูปภาพ' : last.type === 'audio' ? 'ข้อความเสียง' : last.type === 'file' ? `ไฟล์: ${esc(last.name || 'ไฟล์แนบ')}` : esc(last.text || '')) : 'แตะเพื่อเริ่มสนทนา'} ${statusDot}</div>
         </div>`;
       $('.chat-row-avatar', row)?.appendChild(avatar);
       row.addEventListener('click', () => openConversation(friend.code));
@@ -439,6 +452,20 @@
         img.src = message.data;
         img.alt = 'รูปภาพ';
         bubble.appendChild(img);
+      } else if (message.type === 'audio') {
+        const audio = document.createElement('audio');
+        audio.className = 'msg-audio';
+        audio.controls = true;
+        audio.preload = 'metadata';
+        audio.src = message.data;
+        bubble.appendChild(audio);
+      } else if (message.type === 'file') {
+        const link = document.createElement('a');
+        link.className = 'msg-file';
+        link.href = message.data;
+        link.download = message.name || 'ไฟล์';
+        link.innerHTML = `<i class=\"ti ti-file-download\"></i><span>${esc(message.name || 'ไฟล์แนบ')}<small>${esc(formatBytes(message.size || 0))}</small></span>`;
+        bubble.appendChild(link);
       } else {
         bubble.innerHTML = esc(message.text || '').replace(/\n/g, '<br>');
       }
@@ -474,34 +501,85 @@
     const input = $('#messageInput');
     const text = input.value.trim();
     if (!text || !state.currentFriend) return;
-    const message = {
-      id: crypto.randomUUID(), type: 'text', text, ts: Date.now(), mine: true,
-      sent: false, replyText: ''
-    };
+    const message = { id: crypto.randomUUID(), type: 'text', text, ts: Date.now(), mine: true, sent: false, replyText: '' };
     ensureChat(state.currentFriend.code).push(message);
-    saveDB();
-    input.value = '';
-    clearReply();
-    renderMessages();
-    renderChatList();
+    saveDB(); input.value = ''; clearReply(); renderMessages(); renderChatList();
     await flushOutbox(state.currentFriend.code);
-    if (!message.sent) toast('บันทึกข้อความไว้แล้ว จะส่งอัตโนมัติเมื่อเพื่อนเชื่อมต่อ');
+    if (!message.sent) toast('ข้อความถูกเก็บไว้และจะส่งทันทีเมื่อเชื่อมต่อ');
   }
 
-  async function onImageSelected(e) {
+  async function onFileSelected(e) {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !state.currentFriend) return;
-    const data = await compressImage(file);
-    if (data.length > MAX_IMAGE_BYTES * 1.4) return toast('รูปใหญ่เกินไป กรุณาเลือกรูปที่เล็กลง');
-    const message = { id: crypto.randomUUID(), type: 'image', data, ts: Date.now(), mine: true, sent: false };
-    ensureChat(state.currentFriend.code).push(message);
-    saveDB();
-    renderMessages();
-    renderChatList();
-    await flushOutbox(state.currentFriend.code);
-    if (!message.sent) toast('บันทึกรูปไว้แล้ว จะส่งอัตโนมัติเมื่อเพื่อนเชื่อมต่อ');
+    if (file.size > MAX_ATTACHMENT_BYTES) return toast('ไฟล์ใหญ่เกิน 900 KB สำหรับโหมด P2P ฟรี');
+    try {
+      let dataUrl;
+      let type = 'file';
+      if (file.type.startsWith('image/')) {
+        type = 'image';
+        dataUrl = await compressImage(file);
+      } else {
+        dataUrl = await fileToDataURL(file);
+      }
+      if (dataUrl.length > MAX_ATTACHMENT_BYTES * 1.8) return toast('ไฟล์หลังเตรียมส่งยังใหญ่เกินไป');
+      const message = { id: crypto.randomUUID(), type, data: dataUrl, name: file.name, mime: file.type || 'application/octet-stream', size: file.size, ts: Date.now(), mine: true, sent: false };
+      ensureChat(state.currentFriend.code).push(message);
+      saveDB(); renderMessages(); renderChatList();
+      await flushOutbox(state.currentFriend.code);
+      if (!message.sent) toast('กำลังส่งไฟล์…');
+    } catch { toast('เตรียมไฟล์ไม่สำเร็จ'); }
   }
+
+  async function toggleVoiceRecording() {
+    if (!state.currentFriend) return toast('เลือกเพื่อนก่อนส่งข้อความเสียง');
+    if (state.recording) return stopVoiceRecording(false);
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('เบราว์เซอร์นี้ไม่รองรับการบันทึกเสียง');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus'].find(x => MediaRecorder.isTypeSupported(x)) || '';
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : undefined);
+      const chunks = [];
+      const started = Date.now();
+      const timer = setInterval(() => {
+        if (!state.recording) return clearInterval(timer);
+        const seconds = Math.floor((Date.now() - started) / 1000);
+        $('#recordingTimer').textContent = `00:${String(seconds).padStart(2,'0')}`;
+        if (seconds >= MAX_VOICE_SECONDS) stopVoiceRecording(false);
+      }, 250);
+      state.recording = { recorder, stream, chunks, started, timer };
+      $('#recordingBar')?.classList.remove('hidden');
+      $('#voiceMessageBtn')?.classList.add('recording');
+      recorder.ondataavailable = ev => { if (ev.data?.size) chunks.push(ev.data); };
+      recorder.onstop = async () => {
+        clearInterval(timer); stream.getTracks().forEach(t => t.stop());
+        $('#recordingBar')?.classList.add('hidden'); $('#voiceMessageBtn')?.classList.remove('recording');
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        if (!blob.size) return;
+        if (blob.size > MAX_ATTACHMENT_BYTES) return toast('ข้อความเสียงยาวเกินไป กรุณาบันทึกใหม่ให้สั้นลง');
+        const data = await blobToDataURL(blob);
+        const message = { id: crypto.randomUUID(), type: 'audio', data, mime: blob.type, size: blob.size, duration: Math.min(MAX_VOICE_SECONDS, Math.round((Date.now() - started)/1000)), ts: Date.now(), mine: true, sent: false };
+        if (!state.currentFriend) return;
+        ensureChat(state.currentFriend.code).push(message); saveDB(); renderMessages(); renderChatList();
+        await flushOutbox(state.currentFriend.code);
+        if (!message.sent) toast('กำลังส่งข้อความเสียง…');
+      };
+      recorder.start(250);
+    } catch { toast('ไม่สามารถเปิดไมโครโฟนได้'); }
+  }
+
+  function stopVoiceRecording(cancel = false) {
+    const rec = state.recording;
+    if (!rec) return;
+    state.recording = null;
+    clearInterval(rec.timer);
+    if (cancel) { try { rec.recorder.onstop = null; rec.recorder.stop(); } catch {} rec.stream.getTracks().forEach(t => t.stop()); $('#recordingBar')?.classList.add('hidden'); $('#voiceMessageBtn')?.classList.remove('recording'); return; }
+    try { rec.recorder.stop(); } catch {}
+  }
+
+  function fileToDataURL(file) { return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result); r.onerror = reject; r.readAsDataURL(file); }); }
+  function blobToDataURL(blob) { return fileToDataURL(blob); }
+  function formatBytes(n) { if (!n) return '0 B'; const units=['B','KB','MB']; let i=0,v=n; while(v>=1024&&i<units.length-1){v/=1024;i++;} return `${v.toFixed(v>=10||i===0?0:1)} ${units[i]}`; }
 
   function compressImage(file) {
     return new Promise((resolve, reject) => {
@@ -650,50 +728,50 @@
       if (friend) friend.online = true;
       if (Array.isArray(data.recent)) mergeMessages(code, data.recent);
       const conn = state.connections.get(code);
-      if (conn?.open) {
-        try { conn.send({ t: 'sync', messages: ensureChat(code).slice(-50) }); } catch {}
-      }
-      renderChatList();
-      renderMessages();
-      updateConversationStatus();
-      return;
+      if (conn?.open) { try { conn.send({ t: 'sync', messages: ensureChat(code).slice(-50) }); } catch {} }
+      renderChatList(); renderMessages(); updateConversationStatus(); return;
     }
-
-    if (data.t === 'sync') {
-      if (Array.isArray(data.messages)) mergeMessages(code, data.messages);
-      return;
-    }
-
+    if (data.t === 'sync') { if (Array.isArray(data.messages)) mergeMessages(code, data.messages); return; }
     if (data.t === 'message' && data.m?.id) {
-      const list = ensureChat(code);
-      if (!list.some(m => m.id === data.m.id)) {
-        list.push({ ...data.m, mine: false, sent: true });
-        list.sort((a, b) => a.ts - b.ts);
-        saveDB();
-      }
-      const active = state.currentFriend?.code === code;
-      renderChatList();
-      if (active) renderMessages();
-      if (!active || document.hidden) {
-        const friend = findFriend(code);
-        showExternalNotification(friend?.name || code, data.m.type === 'image' ? 'ส่งรูปภาพ' : data.m.text || 'ข้อความใหม่');
-      }
+      receiveMessage(code, data.m); return;
+    }
+    if (data.t === 'media-start' && data.id) {
+      state.mediaIncoming.set(`${code}:${data.id}`, { ...data, chunks: new Array(data.total || 0) }); return;
+    }
+    if (data.t === 'media-chunk' && data.id) {
+      const item = state.mediaIncoming.get(`${code}:${data.id}`); if (!item) return;
+      item.chunks[data.i] = data.data; return;
+    }
+    if (data.t === 'media-end' && data.id) {
+      const key = `${code}:${data.id}`; const item = state.mediaIncoming.get(key); if (!item) return;
+      const raw = item.chunks.join('');
+      const prefix = item.mime ? `data:${item.mime};base64,` : 'data:application/octet-stream;base64,';
+      const message = { id: item.id, type: item.kind, data: prefix + raw, name: item.name || '', mime: item.mime || '', size: item.size || 0, ts: Date.now(), mine: false, sent: true };
+      state.mediaIncoming.delete(key);
+      receiveMessage(code, message, true);
+      const conn = state.connections.get(code); if (conn?.open) { try { conn.send({ t: 'ack', id: item.id }); } catch {} }
       return;
     }
-
     if (data.t === 'ack' && data.id) {
       const message = ensureChat(code).find(m => m.id === data.id);
-      if (message) {
-        message.sent = true;
-        saveDB();
-        if (state.currentFriend?.code === code) renderMessages();
-        renderChatList();
-      }
+      if (message) { message.sent = true; saveDB(); if (state.currentFriend?.code === code) renderMessages(); renderChatList(); }
       return;
     }
+    if (data.t === 'profile' && data.p) upsertFriend(data.p);
+  }
 
-    if (data.t === 'profile' && data.p) {
-      upsertFriend(data.p);
+  function receiveMessage(code, message, alreadySaved = false) {
+    const list = ensureChat(code);
+    if (!list.some(m => m.id === message.id)) {
+      if (!alreadySaved) message = { ...message, mine: false, sent: true };
+      list.push(message); list.sort((a,b) => a.ts - b.ts); saveDB();
+    }
+    const active = state.currentFriend?.code === code;
+    renderChatList(); if (active) renderMessages();
+    if (!active || document.hidden) {
+      const friend = findFriend(code);
+      const body = message.type === 'image' ? 'ส่งรูปภาพ' : message.type === 'audio' ? 'ส่งข้อความเสียง' : message.type === 'file' ? `ส่งไฟล์ ${message.name || ''}` : (message.text || 'ข้อความใหม่');
+      showExternalNotification(friend?.name || code, body);
     }
   }
 
@@ -716,20 +794,44 @@
   async function flushOutbox(code) {
     const conn = state.connections.get(code);
     if (!conn?.open) return false;
-    const pending = ensureChat(code).filter(m => m.mine && m.sent === false);
+    const pending = ensureChat(code).filter(m => m.mine && m.sent === false && !m._sending);
     for (const message of pending) {
+      message._sending = true;
       try {
-        conn.send({ t: 'message', m: { ...message, mine: false, sent: true } });
-        message.sent = true;
-        conn.send({ t: 'ack', id: message.id });
+        if (message.type === 'text') {
+          conn.send({ t: 'message', m: { ...message, mine: false, sent: true } });
+          conn.send({ t: 'ack', id: message.id });
+          message.sent = true;
+        } else {
+          await sendMediaMessage(conn, message);
+        }
       } catch {
-        break;
+        // Keep message unsent; retry later without taking down the connection.
+      } finally {
+        delete message._sending;
       }
+      if (!conn.open) break;
+      await delay(0);
     }
     saveDB();
     if (state.currentFriend?.code === code) renderMessages();
     return true;
   }
+
+  async function sendMediaMessage(conn, message) {
+    const comma = message.data.indexOf(',');
+    const raw = comma >= 0 ? message.data.slice(comma + 1) : message.data;
+    const total = Math.ceil(raw.length / MEDIA_CHUNK_SIZE);
+    conn.send({ t: 'media-start', id: message.id, kind: message.type, mime: message.mime || '', name: message.name || '', size: message.size || 0, total });
+    for (let i = 0; i < total; i++) {
+      conn.send({ t: 'media-chunk', id: message.id, i, data: raw.slice(i * MEDIA_CHUNK_SIZE, (i + 1) * MEDIA_CHUNK_SIZE) });
+      await delay(6);
+      if (!conn.open) throw new Error('connection closed');
+    }
+    conn.send({ t: 'media-end', id: message.id });
+  }
+
+  function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
   function scheduleRetry(code) {
     const friend = findFriend(code);
@@ -1065,28 +1167,61 @@
   }
 
   function openLegal(kind) {
-    const title = kind === 'terms' ? 'ข้อตกลงการใช้งาน' : 'นโยบายความเป็นส่วนตัว';
-    const body = kind === 'terms' ? `
-      <div class="legal-copy">
-        <p>LINKA เป็นแอปสื่อสารบนเว็บ การใช้งานหมายถึงคุณตกลงใช้บริการโดยเคารพสิทธิของผู้อื่นและกฎหมายที่ใช้บังคับ</p>
-        <h4>การใช้งานที่ยอมรับได้</h4><p>ห้ามใช้บริการเพื่อหลอกลวง คุกคาม ข่มขู่ สแปม ทำลายระบบ หรือส่งเนื้อหาที่ผิดกฎหมาย</p>
-        <h4>บัญชีและรหัส LINKA</h4><p>บัญชีรุ่นนี้เก็บไว้ในอุปกรณ์ของผู้ใช้ รหัส LINKA ใช้สำหรับค้นหาและเริ่มการเชื่อมต่อ ไม่ใช่รหัสผ่านหรือหลักฐานยืนยันตัวบุคคล</p>
-        <h4>บริการบุคคลที่สาม</h4><p>การเชื่อมต่อแบบ peer-to-peer ใช้ PeerJS/WebRTC และอาจได้รับผลกระทบจากเครือข่าย อุปกรณ์ และบริการภายนอก</p>
-        <h4>การยอมรับ</h4><p>การใช้ LINKA ต่อไปหลังจากอ่านข้อตกลงนี้ถือว่าคุณยอมรับข้อกำหนดนี้</p>
-      </div>` : `
-      <div class="legal-copy">
-        <p>LINKA รุ่นนี้ออกแบบให้ข้อมูลบัญชี รายชื่อ และประวัติแชตเก็บอยู่ใน Local Storage ของเบราว์เซอร์เป็นหลัก</p>
-        <h4>ข้อมูลบนอุปกรณ์</h4><p>ชื่อผู้ใช้ ชื่อที่แสดง รหัส LINKA รูปโปรไฟล์ รายชื่อเพื่อน และข้อความที่บันทึกไว้ในแอปอาจอยู่บนอุปกรณ์ของคุณ</p>
-        <h4>การเชื่อมต่อ</h4><p>ข้อความ เสียง และวิดีโอส่งผ่าน WebRTC หลังการจับคู่โดยบริการ signaling ของ PeerJS ข้อมูลเครือข่ายอาจถูกใช้เพื่อสร้างการเชื่อมต่อ</p>
-        <h4>การแจ้งเตือน</h4><p>การแจ้งเตือนทำงานเมื่อคุณอนุญาตผ่านเบราว์เซอร์ และระบบปฏิบัติการอาจแสดงการแจ้งเตือนบนอุปกรณ์</p>
-        <h4>การลบข้อมูล</h4><p>การลบบัญชีจากหน้าโปรไฟล์จะลบข้อมูล LINKA ที่เก็บไว้ในอุปกรณ์เครื่องนี้</p>
-      </div>`;
-
+    const title = kind === 'terms' ? 'ข้อตกลงการใช้งาน LINKA' : 'นโยบายความเป็นส่วนตัว LINKA';
+    const body = kind === 'terms' ? termsHtml() : privacyHtml();
     const root = $('#modalRoot');
-    root.innerHTML = `<div class="modal-backdrop"><div class="modal"><div class="modal-header"><div><div class="modal-kicker">LINKA</div><h3>${title}</h3></div><button class="icon-btn" data-close aria-label="ปิด"><i class="ti ti-x"></i></button></div><div class="modal-body">${body}</div><div class="modal-actions"><button class="btn secondary" data-close>ปิด</button></div></div></div>`;
+    root.innerHTML = `<div class="modal-backdrop"><div class="modal legal-modal"><div class="modal-header"><div><div class="modal-kicker">LINKA · ฉบับ ${LEGAL_VERSION}</div><h3>${title}</h3></div><button class="icon-btn" data-close aria-label="ปิด"><i class="ti ti-x"></i></button></div><div class="modal-body legal-body">${body}</div><div class="modal-actions"><button class="btn secondary" data-close>ปิด</button></div></div></div>`;
     $$('[data-close]', root).forEach(btn => btn.onclick = () => root.innerHTML = '');
     refreshIcons();
   }
+
+  function termsHtml() {
+    return `<p><strong>มีผลตั้งแต่ 8 ตุลาคม 2569</strong></p>
+      <p>เอกสารฉบับนี้กำหนดสิทธิ หน้าที่ และเงื่อนไขระหว่างผู้ให้บริการ LINKA (“ผู้ให้บริการ”) กับผู้ใช้งาน (“ผู้ใช้”) สำหรับการใช้เว็บไซต์และแอปพลิเคชัน LINKA ซึ่งให้บริการสื่อสารแบบเพียร์ทูเพียร์ บริการแชต การส่งข้อความ รูปภาพ ไฟล์ ข้อความเสียง การโทรเสียง และวิดีโอคอล ทั้งนี้ เอกสารนี้จัดทำขึ้นโดยคำนึงถึงกฎหมายไทยที่เกี่ยวข้อง เช่น กฎหมายว่าด้วยธุรกรรมทางอิเล็กทรอนิกส์ กฎหมายคุ้มครองผู้บริโภค กฎหมายคุ้มครองข้อมูลส่วนบุคคล กฎหมายว่าด้วยการกระทำความผิดเกี่ยวกับคอมพิวเตอร์ และกฎหมายทรัพย์สินทางปัญญาที่ใช้บังคับในแต่ละกรณี</p>
+      ${legalSection('1. คำนิยาม', '<p>“บริการ” หมายถึงซอฟต์แวร์ เว็บไซต์ แอปแบบติดตั้ง และฟังก์ชันที่เกี่ยวข้องทั้งหมดของ LINKA; “บัญชี” หมายถึงข้อมูลโปรไฟล์ที่สร้างและเก็บไว้ในอุปกรณ์ของผู้ใช้; “รหัส LINKA” หมายถึงรหัสสำหรับเริ่มต้นการเชื่อมต่อกับผู้ใช้อื่น; “เนื้อหา” หมายถึงข้อความ รูปภาพ ไฟล์ เสียง วิดีโอ ชื่อผู้ใช้ รูปโปรไฟล์ และข้อมูลอื่นที่ผู้ใช้ส่งหรือจัดเก็บผ่านบริการ; “การเชื่อมต่อ P2P” หมายถึงการสื่อสารที่ข้อมูลสื่ออาจถูกส่งระหว่างอุปกรณ์ของคู่สนทนาโดยอาศัย WebRTC/PeerJS และโครงสร้างเครือข่ายที่เกี่ยวข้อง')}
+      ${legalSection('2. การยอมรับข้อตกลง', '<p>การสร้างบัญชี การกดใช้งานบริการ หรือการใช้บริการต่อหลังจากได้รับทราบข้อตกลง ถือว่าผู้ใช้ได้อ่านและยอมรับข้อตกลงนี้ในขอบเขตที่กฎหมายอนุญาต หากไม่ยอมรับข้อกำหนด ผู้ใช้ต้องหยุดใช้บริการและลบข้อมูลที่จัดเก็บไว้ในอุปกรณ์</p><p>การยอมรับทางอิเล็กทรอนิกส์ของผู้ใช้ไม่ทำให้เอกสารหรือการตกลงสูญเสียผลเพียงเพราะอยู่ในรูปอิเล็กทรอนิกส์ โดยกฎหมายธุรกรรมทางอิเล็กทรอนิกส์รับรองสถานะของข้อมูลอิเล็กทรอนิกส์และการเก็บรักษาที่เข้าถึงและนำกลับมาใช้ได้โดยความหมายไม่เปลี่ยนแปลง</p>')}
+      ${legalSection('3. คุณสมบัติและความสามารถในการเข้าทำข้อตกลง', '<p>ผู้ใช้ต้องมีความสามารถตามกฎหมายในการเข้าทำข้อตกลง หรือใช้บริการโดยมีความยินยอม/การดำเนินการของผู้แทนโดยชอบด้วยกฎหมายในกรณีที่กฎหมายกำหนด ห้ามผู้ใช้แอบอ้างเป็นบุคคลอื่น ใช้บัญชีของบุคคลอื่นโดยไม่ได้รับอนุญาต หรือใช้ข้อมูลที่ทำให้บุคคลอื่นเข้าใจผิดอย่างมีนัยสำคัญ</p>')}
+      ${legalSection('4. การสร้างและดูแลบัญชี', '<p>ข้อมูลบัญชีรุ่นนี้ถูกจัดเก็บใน Local Storage ของเบราว์เซอร์เป็นหลัก รหัส LINKA มีหน้าที่เป็นตัวระบุสำหรับการเริ่มเชื่อมต่อ ไม่ใช่รหัสผ่าน ไม่ใช่บัตรประชาชน ไม่ใช่หลักฐานยืนยันตัวบุคคล และไม่ควรนำไปใช้เพื่อยืนยันตัวตนในกิจกรรมที่มีความเสี่ยง</p><p>ผู้ใช้มีหน้าที่รักษารหัสผ่าน อุปกรณ์ และช่องทางเข้าถึงบัญชี หากบุคคลอื่นเข้าถึงอุปกรณ์ที่มีข้อมูลบัญชีอยู่ ผู้ให้บริการไม่อาจรับประกันว่าจะป้องกันการเข้าถึงข้อมูลในเครื่องนั้นได้ ผู้ใช้ควรล็อกเครื่องและใช้มาตรการรักษาความปลอดภัยของระบบปฏิบัติการ</p>')}
+      ${legalSection('5. การสื่อสารและความปลอดภัยของการเชื่อมต่อ', '<p>LINKA ใช้ WebRTC และ PeerJS ในการทำการเชื่อมต่อ การส่งข้อความและสื่ออาจต้องผ่านระบบ signaling เพื่อค้นหาคู่เชื่อมต่อก่อน หลังจากนั้นการส่งสื่ออาจเป็นการสื่อสารระหว่างอุปกรณ์โดยตรงหรือผ่านโครงสร้างเครือข่ายที่จำเป็น ผู้ให้บริการไม่รับประกันว่าการเชื่อมต่อจะสำเร็จในทุกเครือข่าย เนื่องจาก NAT ไฟร์วอลล์ เครือข่ายองค์กร การตั้งค่าเบราว์เซอร์ อุปกรณ์ หรือบริการภายนอก</p><p>ผู้ใช้รับทราบว่าข้อความหรือสื่อที่ผู้ใช้ส่งให้ผู้ติดต่อเป็นการส่งข้อมูลไปยังอุปกรณ์ของบุคคลอื่น ผู้ให้บริการจึงไม่อาจรับรองการจัดเก็บ การลบ หรือการคุ้มครองข้อมูลหลังจากข้อมูลเข้าสู่การควบคุมของผู้รับได้</p>')}
+      ${legalSection('6. เนื้อหาที่ห้ามใช้บริการเพื่อเผยแพร่', '<p>ห้ามใช้บริการเพื่อกระทำหรือสนับสนุนการกระทำที่ผิดกฎหมาย รวมถึงการฉ้อโกง การปลอมแปลงตัวตน การข่มขู่ คุกคาม การสะกดรอย การละเมิดความเป็นส่วนตัว การเผยแพร่ข้อมูลส่วนบุคคลของผู้อื่นโดยไม่มีสิทธิ การเผยแพร่สื่อทางเพศที่ผิดกฎหมายหรือสื่อที่เกี่ยวข้องกับเด็ก การเผยแพร่เนื้อหาที่ละเมิดลิขสิทธิ์ เครื่องหมายการค้า หรือทรัพย์สินทางปัญญาของบุคคลอื่น การหลอกลวง การสแปม การส่งมัลแวร์หรือโค้ดอันตราย การโจมตีหรือรบกวนระบบ และการใช้บริการเพื่อการกระทำที่กฎหมายห้าม</p><p>ผู้ใช้ต้องไม่ใช้บริการเพื่อจัดเตรียมคำสั่งหรือข้อมูลที่มุ่งหมายให้บุคคลอื่นนำไปกระทำความผิดหรือหลบเลี่ยงการบังคับใช้กฎหมาย</p>')}
+      ${legalSection('7. สิทธิในเนื้อหาและใบอนุญาตที่จำเป็นต่อการให้บริการ', '<p>ผู้ใช้ยังคงเป็นเจ้าของสิทธิในเนื้อหาที่ผู้ใช้มีสิทธิโดยชอบอยู่เดิม ผู้ใช้รับรองว่าตนมีสิทธิที่จำเป็นในการส่ง เผยแพร่ หรือแบ่งปันเนื้อหานั้น และไม่ละเมิดสิทธิของผู้อื่น</p><p>ในส่วนที่จำเป็นต่อการทำงานของ LINKA ผู้ใช้อนุญาตให้ระบบทำสำเนาชั่วคราว ประมวลผล แปลงรูปแบบ ส่งต่อ และจัดเก็บเนื้อหาบนอุปกรณ์ เพื่อให้สามารถส่งข้อความ แสดงผล ดาวน์โหลด หรือสื่อสารตามคำสั่งของผู้ใช้ได้ การอนุญาตนี้จำกัดเฉพาะวัตถุประสงค์ดังกล่าวและไม่ทำให้ผู้ให้บริการกลายเป็นเจ้าของเนื้อหาของผู้ใช้</p>')}
+      ${legalSection('8. การแจ้งเบาะแสและการดำเนินการต่อเนื้อหาที่ผิดกฎหมาย', '<p>เมื่อมีรายงานที่น่าเชื่อถือเกี่ยวกับการใช้งานที่ผิดกฎหมายหรือเสี่ยงต่อความปลอดภัย ผู้ให้บริการอาจดำเนินมาตรการที่เหมาะสมตามความสามารถทางเทคนิคและข้อกฎหมาย เช่น ระงับบัญชีบนอุปกรณ์ที่ผู้ให้บริการควบคุม การปิดช่องทางการเชื่อมต่อที่จำเป็น การปรับปรุงระบบ หรือให้ความร่วมมือกับเจ้าหน้าที่รัฐเมื่อมีหน้าที่ตามกฎหมาย</p><p>เนื่องจาก LINKA รุ่นนี้มีการประมวลผลข้อมูลภายในเครื่องและใช้การสื่อสารแบบ P2P ความสามารถในการตรวจสอบ ลบ หรือเรียกคืนเนื้อหาที่อยู่ในอุปกรณ์ของผู้ใช้หรือผู้รับอาจมีข้อจำกัด</p>')}
+      ${legalSection('9. การโทร เสียง และวิดีโอ', '<p>การโทรจำเป็นต้องได้รับสิทธิ์ไมโครโฟน/กล้องจากระบบปฏิบัติการหรือเบราว์เซอร์ ผู้ใช้ต้องไม่บันทึกหรือเผยแพร่เสียง/ภาพของบุคคลอื่นในลักษณะที่ละเมิดสิทธิหรือฝ่าฝืนกฎหมายที่ใช้บังคับ การบันทึกเสียงหรือภาพโดยผู้ใช้เองอยู่นอกการควบคุมของ LINKA และผู้ใช้ต้องรับผิดชอบต่อการปฏิบัติตามกฎหมายที่เกี่ยวข้อง</p>')}
+      ${legalSection('10. ไฟล์ รูปภาพ และข้อความเสียง', '<p>เพื่อให้การส่งผ่าน P2P ทำงานได้ LINKA รุ่นนี้จำกัดขนาดสื่อที่ส่งต่อในระดับหนึ่ง และระบบอาจบีบอัดรูปภาพ เปลี่ยนรูปแบบเสียง หรือแบ่งสื่อออกเป็นส่วนย่อยก่อนส่ง คุณไม่ควรใช้บริการนี้เป็นพื้นที่สำรองข้อมูลหลักสำหรับไฟล์สำคัญ</p><p>ผู้ใช้มีหน้าที่ตรวจสอบไฟล์ก่อนเปิด ดาวน์โหลด หรือส่งต่อ และควรใช้ซอฟต์แวร์ความปลอดภัยที่เหมาะสมกับอุปกรณ์ของตน</p>')}
+      ${legalSection('11. บริการของบุคคลภายนอก', '<p>LINKA อาจพึ่งพาบริการภายนอก เช่น PeerJS Cloud, WebRTC infrastructure, CDN สำหรับไลบรารี และบริการโฮสต์เว็บไซต์ บริการภายนอกเหล่านี้มีข้อกำหนดและนโยบายของตนเอง ผู้ใช้ยอมรับว่าการหยุดให้บริการ การเปลี่ยนนโยบาย หรือข้อจำกัดของบริการภายนอกอาจทำให้ LINKA บางฟังก์ชันใช้งานไม่ได้</p>')}
+      ${legalSection('12. ความพร้อมใช้งานและการบำรุงรักษา', '<p>บริการให้ตามสภาพที่มีอยู่และอาจมีการแก้ไข ปรับปรุง หยุดชั่วคราว หรือยุติบางฟังก์ชันโดยไม่สามารถรับประกันความพร้อมใช้งานตลอดเวลาได้ ผู้ให้บริการจะใช้ความพยายามตามสมควรเพื่อรักษาการทำงาน แต่ไม่รับประกันว่าจะปราศจากข้อผิดพลาดหรือเหมาะสมกับทุกอุปกรณ์และทุกเครือข่าย</p>')}
+      ${legalSection('13. การลบบัญชีและการยุติการใช้งาน', '<p>ผู้ใช้สามารถลบบัญชีและข้อมูลของตนจากอุปกรณ์ผ่านเมนูที่กำหนด การลบดังกล่าวลบข้อมูลที่ LINKA เก็บไว้ในอุปกรณ์นั้น ไม่ได้ลบสำเนาที่ผู้รับอาจมี หรือข้อมูลที่อยู่นอกการควบคุมของแอป</p><p>ผู้ให้บริการอาจจำกัดหรือหยุดการทำงานของส่วนหนึ่งส่วนใดของบริการเมื่อจำเป็นต่อความปลอดภัย การปฏิบัติตามกฎหมาย หรือการป้องกันการใช้งานที่ผิดวัตถุประสงค์เท่าที่กฎหมายอนุญาต</p>')}
+      ${legalSection('14. ความรับผิดของผู้ใช้', '<p>ผู้ใช้รับผิดชอบต่อบัญชี การกระทำ เนื้อหา และผลจากการสื่อสารของตนเอง ผู้ใช้ต้องชดใช้ความเสียหายแก่ผู้ให้บริการเท่าที่กฎหมายอนุญาต หากความเสียหายเกิดจากการจงใจหรือประมาทเลินเล่อของผู้ใช้หรือการกระทำที่ฝ่าฝืนข้อตกลงนี้ ทั้งนี้ข้อกำหนดใดที่จำกัดสิทธิของผู้บริโภคตามกฎหมายที่ไม่สามารถสละหรือลดได้ จะไม่ใช้บังคับเกินขอบเขตที่กฎหมายอนุญาต</p>')}
+      ${legalSection('15. ความรับผิดของผู้ให้บริการ', '<p>ไม่ว่าในกรณีใด ข้อจำกัดความรับผิดจะตีความภายใต้กฎหมายไทยและไม่ตัดหรือยกเว้นความรับผิดที่กฎหมายกำหนดให้ไม่สามารถยกเว้นได้ โดยเฉพาะกรณีการกระทำโดยจงใจหรือประมาทเลินเล่ออย่างร้ายแรงในกรณีที่กฎหมายกำหนด รวมถึงสิทธิของผู้บริโภคที่กฎหมายให้ความคุ้มครอง</p>')}
+      ${legalSection('16. การเปลี่ยนแปลงข้อตกลง', '<p>ผู้ให้บริการอาจปรับปรุงข้อตกลงเพื่อให้สอดคล้องกับการเปลี่ยนแปลงทางเทคนิค บริการ หรือกฎหมาย หากเป็นการเปลี่ยนแปลงที่มีสาระสำคัญ จะพยายามแจ้งให้ทราบผ่านช่องทางที่เหมาะสม ผู้ใช้ที่ไม่ยอมรับฉบับใหม่สามารถหยุดใช้บริการและลบบัญชีจากอุปกรณ์</p>')}
+      ${legalSection('17. กฎหมายที่ใช้บังคับและข้อพิพาท', '<p>ข้อตกลงนี้อยู่ภายใต้กฎหมายไทย เว้นแต่บทบัญญัติบังคับของกฎหมายที่คุ้มครองผู้บริโภคหรือสิทธิของบุคคลจะกำหนดเป็นอย่างอื่น คู่สัญญาควรพยายามแก้ไขข้อพิพาทโดยการติดต่อและเจรจาก่อน และหากไม่สามารถตกลงกันได้ ให้ดำเนินการตามกระบวนการและเขตอำนาจศาลที่กฎหมายกำหนด</p>')}
+      ${legalSection('18. ความสมบูรณ์ของข้อตกลง', '<p>หากข้อกำหนดส่วนหนึ่งส่วนใดเป็นโมฆะหรือไม่สามารถบังคับใช้ได้ ให้ตีความหรือปรับใช้เท่าที่กฎหมายอนุญาต โดยไม่กระทบความสมบูรณ์ของส่วนอื่นของข้อตกลง</p>')}
+      <p class="legal-note">เอกสารนี้เป็นแบบร่างข้อกำหนดสำหรับผลิตภัณฑ์ LINKA และควรได้รับการตรวจทานโดยผู้เชี่ยวชาญด้านกฎหมายก่อนเปิดให้บริการแก่สาธารณะหรือใช้ในเชิงพาณิชย์</p>`;
+  }
+
+  function privacyHtml() {
+    return `<p><strong>มีผลตั้งแต่ 8 ตุลาคม 2569</strong></p>
+      <p>นโยบายนี้อธิบายวิธีที่ LINKA เก็บ ใช้ เปิดเผย และปกป้องข้อมูลส่วนบุคคล โดยออกแบบให้สอดคล้องกับหลักของพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 และกฎหมายที่เกี่ยวข้อง โดยเฉพาะหลักความโปร่งใส วัตถุประสงค์ การเก็บเท่าที่จำเป็น ความมั่นคงปลอดภัย และสิทธิของเจ้าของข้อมูล</p>
+      ${legalSection('1. ผู้ควบคุมข้อมูลและขอบเขต', '<p>สำหรับการเปิดให้บริการจริง เจ้าของโครงการต้องระบุชื่อหรือชื่อนิติบุคคลของผู้ควบคุมข้อมูล ที่อยู่หรือช่องทางติดต่อ และช่องทางสำหรับคำขอใช้สิทธิให้ครบถ้วนก่อนเผยแพร่เชิงพาณิชย์ นโยบายฉบับนี้ใช้กับข้อมูลที่ LINKA จัดการผ่านเว็บไซต์และแอป รวมถึงข้อมูลที่เก็บไว้ภายในอุปกรณ์ของผู้ใช้ตามฟังก์ชันที่ผู้ใช้เลือกใช้</p>')}
+      ${legalSection('2. ข้อมูลที่อาจถูกเก็บ', '<p>ข้อมูลบัญชี: ชื่อที่แสดง ชื่อผู้ใช้ รหัส LINKA ค่าแฮชรหัสผ่าน รูปโปรไฟล์ และเวลาที่ตอบรับเงื่อนไข; ข้อมูลการติดต่อ: รหัสเพื่อน ชื่อ โปรไฟล์ และข้อมูลสถานะที่ผู้ใช้เลือกให้แสดง; ข้อมูลเนื้อหา: ข้อความ รูปภาพ ไฟล์ และข้อความเสียงที่ผู้ใช้บันทึกในแอป; ข้อมูลทางเทคนิค: ประเภทเบราว์เซอร์ อุปกรณ์ สถานะการเชื่อมต่อ และข้อมูลที่จำเป็นต่อ WebRTC/PeerJS เพื่อให้การเชื่อมต่อเกิดขึ้น; ข้อมูลสิทธิ์: การอนุญาตกล้อง ไมโครโฟน และการแจ้งเตือนตามที่ผู้ใช้ให้ไว้กับระบบปฏิบัติการ/เบราว์เซอร์</p>')}
+      ${legalSection('3. แหล่งที่มาของข้อมูล', '<p>ข้อมูลบัญชีและเนื้อหาส่วนใหญ่ได้จากผู้ใช้โดยตรง การเชื่อมต่อ P2P อาจแลกเปลี่ยนข้อมูลโปรไฟล์และข้อมูลเครือข่ายที่จำเป็นระหว่างคู่สนทนา การทำงานของ PeerJS/WebRTC อาจทำให้บริการภายนอกประมวลผลข้อมูลทางเทคนิคเพื่อจัดการการเชื่อมต่อ</p>')}
+      ${legalSection('4. วัตถุประสงค์การใช้ข้อมูล', '<p>ใช้เพื่อสร้างและแสดงบัญชี จัดการรายชื่อเพื่อน เปิดการแชต ส่งข้อความ ส่งสื่อ โทรเสียงและวิดีโอ แสดงการแจ้งเตือน รักษาความปลอดภัย ป้องกันการใช้งานผิดวัตถุประสงค์ แก้ปัญหาทางเทคนิค และปฏิบัติตามหน้าที่ทางกฎหมายเมื่อจำเป็น</p>')}
+      ${legalSection('5. ฐานทางกฎหมาย', '<p>ฐานการประมวลผลจะขึ้นอยู่กับกิจกรรม เช่น ความจำเป็นเพื่อทำสัญญาหรือให้บริการที่ผู้ใช้ร้องขอ การปฏิบัติตามกฎหมาย ประโยชน์โดยชอบด้วยกฎหมายที่ชั่งน้ำหนักสิทธิของผู้ใช้แล้ว และความยินยอมในกรณีที่กฎหมายกำหนดให้ต้องขอความยินยอม เช่น กิจกรรมบางประเภทที่ต้องใช้ข้อมูลเพื่อวัตถุประสงค์เฉพาะ</p>')}
+      ${legalSection('6. การเก็บข้อมูลไว้ในอุปกรณ์', '<p>บัญชี เพื่อน และประวัติข้อความของรุ่นนี้ถูกเก็บใน Local Storage ของอุปกรณ์เป็นหลัก ผู้ใช้ควรตระหนักว่า Local Storage เป็นพื้นที่ของเบราว์เซอร์ หากล้างข้อมูลเว็บไซต์ ถอนการติดตั้ง รีเซ็ตเบราว์เซอร์ หรือเปลี่ยนอุปกรณ์ ข้อมูลอาจหายได้ และ LINKA อาจไม่สามารถกู้คืนได้</p>')}
+      ${legalSection('7. กล้อง ไมโครโฟน และข้อความเสียง', '<p>กล้องและไมโครโฟนจะถูกใช้งานเมื่อผู้ใช้กดฟังก์ชันที่เกี่ยวข้องและให้สิทธิ์แก่อุปกรณ์ ข้อความเสียงจะถูกบันทึกชั่วคราวเพื่อสร้างไฟล์และส่งให้ผู้รับตามคำสั่งของผู้ใช้ ผู้ใช้สามารถปฏิเสธสิทธิ์เหล่านี้ได้ แต่อาจทำให้ฟังก์ชันโทรหรือข้อความเสียงใช้ไม่ได้</p>')}
+      ${legalSection('8. การส่งต่อและการเปิดเผยข้อมูล', '<p>ข้อมูลอาจถูกส่งไปยังผู้ติดต่อที่ผู้ใช้เลือก และไปยังผู้ให้บริการโครงสร้างพื้นฐานที่จำเป็นต่อการทำงาน เช่น ผู้ให้บริการ signaling/โครงสร้าง WebRTC หรือ CDN ที่ใช้โหลดไลบรารี ทั้งนี้การเปิดเผยจะจำกัดตามความจำเป็นของการให้บริการและข้อกำหนดของกฎหมาย</p>')}
+      ${legalSection('9. การโอนข้อมูลระหว่างประเทศ', '<p>บริการของบุคคลภายนอกอาจอยู่ในประเทศอื่น หากมีการโอนข้อมูลส่วนบุคคลออกนอกประเทศ ผู้ควบคุมข้อมูลต้องดำเนินการตามหลักเกณฑ์ที่กฎหมายคุ้มครองข้อมูลส่วนบุคคลกำหนด เช่น มาตรฐานการคุ้มครองที่เหมาะสม ข้อยกเว้นที่กฎหมายรับรอง หรือความยินยอมที่มีข้อมูลเพียงพอในกรณีที่ใช้เป็นฐาน</p>')}
+      ${legalSection('10. ระยะเวลาเก็บรักษา', '<p>ข้อมูลที่เก็บในอุปกรณ์จะคงอยู่จนกว่าผู้ใช้จะลบข้อมูล ล้างข้อมูลเว็บไซต์ หรือจนระบบปฏิบัติการ/เบราว์เซอร์ลบข้อมูล ส่วนข้อมูลที่ผู้ให้บริการภายนอกอาจประมวลผลจะเป็นไปตามระยะเวลาของผู้ให้บริการนั้นและข้อตกลงที่เกี่ยวข้อง เมื่อหมดความจำเป็นควรลบ ทำลาย หรือทำให้ไม่สามารถระบุตัวบุคคลได้ตามที่กฎหมายอนุญาต</p>')}
+      ${legalSection('11. มาตรการความมั่นคงปลอดภัย', '<p>LINKA ใช้ HTTPS, WebRTC และกลไกของเบราว์เซอร์เพื่อช่วยปกป้องการส่งข้อมูล แต่ไม่มีระบบใดรับประกันความปลอดภัยได้อย่างสมบูรณ์ ผู้ใช้ควรอัปเดตระบบ ใช้รหัสผ่านที่เหมาะสม ล็อกหน้าจอ และไม่เปิดเผยรหัสหรือข้อมูลสำคัญให้ผู้อื่น</p>')}
+      ${legalSection('12. สิทธิของเจ้าของข้อมูล', '<p>ภายใต้เงื่อนไขและข้อยกเว้นของกฎหมาย ผู้ใช้มีสิทธิที่อาจรวมถึงสิทธิขอเข้าถึงข้อมูล แก้ไขข้อมูล ลบหรือทำลายข้อมูล ขอให้ระงับการประมวลผล คัดค้านการประมวลผล ถอนความยินยอมในกรณีที่ใช้ความยินยอมเป็นฐาน และสิทธิในการรับหรือโอนข้อมูลในกรณีที่กฎหมายกำหนด การใช้สิทธิจะขึ้นกับข้อมูลที่ LINKA หรือผู้ประมวลผลมีอยู่จริง</p>')}
+      ${legalSection('13. การใช้สิทธิและการลบบัญชี', '<p>สำหรับข้อมูลที่อยู่ในเครื่อง ผู้ใช้สามารถลบได้ทันทีผ่านเมนูบัญชี สำหรับข้อมูลที่ผู้ให้บริการหรือผู้ประมวลผลถือครอง ผู้ใช้สามารถยื่นคำขอผ่านช่องทางติดต่อที่ผู้ให้บริการประกาศ และผู้ให้บริการอาจขอข้อมูลเพื่อยืนยันตัวตนก่อนดำเนินการ</p>')}
+      ${legalSection('14. เด็กและผู้เยาว์', '<p>หากการประมวลผลใดต้องอาศัยความยินยอมตามกฎหมายและผู้ใช้เป็นผู้เยาว์ ผู้ให้บริการจะดำเนินการตามเงื่อนไขเกี่ยวกับความยินยอมของผู้ใช้นั้นและผู้ใช้อำนาจปกครองตามที่กฎหมายกำหนด ผู้ปกครองที่พบการใช้บริการของเด็กโดยไม่เหมาะสมควรติดต่อผู้ให้บริการผ่านช่องทางที่ประกาศ</p>')}
+      ${legalSection('15. การเปลี่ยนแปลงนโยบาย', '<p>นโยบายอาจถูกปรับปรุงเมื่อกฎหมาย เทคโนโลยี หรือรูปแบบบริการเปลี่ยนแปลง หากการเปลี่ยนแปลงมีสาระสำคัญ ผู้ให้บริการจะพยายามแจ้งให้ทราบผ่านหน้าแอปหรือช่องทางที่เหมาะสม</p>')}
+      ${legalSection('16. การติดต่อ', '<p>ในการเปิดให้บริการจริง ควรระบุชื่อผู้ควบคุมข้อมูล ที่อยู่ และอีเมล/ช่องทางรับคำขอใช้สิทธิของเจ้าของข้อมูลในส่วนนี้ให้ชัดเจนก่อนเผยแพร่สู่สาธารณะ</p>')}
+      <p class="legal-note">นโยบายนี้เป็นแบบร่างสำหรับผลิตภัณฑ์ LINKA และควรได้รับการตรวจทานโดยผู้เชี่ยวชาญด้านกฎหมายคุ้มครองข้อมูลส่วนบุคคลก่อนใช้งานจริง</p>`;
+  }
+
+  function legalSection(title, content) { return `<section class="legal-section"><h4>${title}</h4>${content}</section>`; }
 
   async function installApp() {
     if (!state.deferredInstall) return toast('เปิดเมนูเบราว์เซอร์แล้วเลือก “ติดตั้งแอป” ได้');

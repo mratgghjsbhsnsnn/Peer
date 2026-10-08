@@ -24,3 +24,12 @@ Account, friend list, and chat history are stored locally in localStorage. This 
 ## Icon license
 Tabler Icons: MIT License. Source: https://github.com/tabler/tabler-icons
 Lucide is not bundled in this revision.
+
+
+## Media transport
+
+รุ่นนี้ใช้ PeerJS DataConnection แบบ reliable และแบ่งรูป/ไฟล์/เสียงเป็นชิ้นส่วนเล็กก่อนส่ง เพื่อไม่ให้ payload ขนาดใหญ่ก้อนเดียวทำให้ connection ถูกปิด ข้อความตัวอักษรยังส่งแยกได้ทันทีระหว่างการส่งสื่อ
+
+รองรับข้อความเสียงสูงสุดประมาณ 60 วินาที และไฟล์แนบขนาดไม่เกินประมาณ 900 KB ต่อรายการในโหมด P2P ฟรี เพื่อจำกัดการใช้หน่วยความจำและ local storage
+
+ข้อกำหนดการใช้งานและนโยบายความเป็นส่วนตัวในแอปเป็นแบบร่างเชิงผลิตภัณฑ์สำหรับประเทศไทย ไม่ใช่คำปรึกษากฎหมาย และควรให้ผู้เชี่ยวชาญตรวจทานก่อนเปิดใช้งานเชิงพาณิชย์
